@@ -1,11 +1,69 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../models/produk.dart';
 import '../providers/produk_provider.dart';
 import '../services/foto_produk_service.dart';
 import '../widgets/foto_produk.dart';
+
+// ─── Formatter angka ribuan (dipakai di list & form) ─────────────────────────
+
+String formatRibuan(num angka) {
+  return angka.toStringAsFixed(0).replaceAllMapped(
+        RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+        (m) => '${m[1]}.',
+      );
+}
+
+// Menambahkan titik pemisah ribuan secara otomatis saat mengetik
+class RupiahInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    final digitsOnly = newValue.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digitsOnly.isEmpty) {
+      return const TextEditingValue(text: '');
+    }
+    final formatted = formatRibuan(int.parse(digitsOnly));
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
+
+// Membuat huruf pertama tiap kata otomatis kapital saat mengetik
+class KapitalSetiapKataFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    if (newValue.text.isEmpty) return newValue;
+
+    final teks = newValue.text;
+    final buffer = StringBuffer();
+    bool awalKata = true;
+
+    for (int i = 0; i < teks.length; i++) {
+      final huruf = teks[i];
+      if (huruf == ' ') {
+        buffer.write(huruf);
+        awalKata = true;
+      } else if (awalKata) {
+        buffer.write(huruf.toUpperCase());
+        awalKata = false;
+      } else {
+        buffer.write(huruf);
+      }
+    }
+
+    return newValue.copyWith(
+      text: buffer.toString(),
+      selection: newValue.selection,
+    );
+  }
+}
 
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
@@ -35,15 +93,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[100],
       body: Column(
         children: [
           // Search bar
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
                 hintText: 'Cari produk...',
+                filled: true,
+                fillColor: Colors.white,
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: _keyword.isNotEmpty
                     ? IconButton(
@@ -56,6 +117,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     : null,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
                 ),
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
               ),
@@ -96,56 +158,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 }
 
                 return ListView.builder(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(14, 4, 14, 90),
                   itemCount: filtered.length,
-                  itemBuilder: (context, index) {
-                    final produk = filtered[index];
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      child: ListTile(
-                        leading: FotoProduk(fotoPath: produk.fotoPath, size: 56),
-                        title: Text(produk.nama,
-                            style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Modal: Rp ${_formatAngka(produk.hargaBeli)}'),
-                            Text('Jual: Rp ${_formatAngka(produk.hargaJual)}'),
-                            Text(
-                              'Stok: ${produk.stok}',
-                              style: TextStyle(
-                                color: produk.stok <= 3 ? Colors.red : Colors.black87,
-                                fontWeight: produk.stok <= 3
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                              ),
-                            ),
-                          ],
-                        ),
-                        isThreeLine: true,
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.add_box, color: Colors.green),
-                              tooltip: 'Tambah Stok',
-                              onPressed: () =>
-                                  _bukaDialogTambahStok(context, produk),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.edit, color: Colors.blue),
-                              onPressed: () =>
-                                  _bukaFormProduk(context, produk: produk),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => _konfirmasiHapus(context, produk),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
+                  itemBuilder: (context, index) =>
+                      _kartuProduk(context, filtered[index]),
                 );
               },
             ),
@@ -159,11 +175,154 @@ class _InventoryScreenState extends State<InventoryScreen> {
     );
   }
 
-  String _formatAngka(double angka) {
-    return angka.toStringAsFixed(0).replaceAllMapped(
-          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-          (m) => '${m[1]}.',
-        );
+  // ─── Kartu produk (didesain ulang lebih rapi) ────────────────────────────
+
+  Widget _kartuProduk(BuildContext context, Produk produk) {
+    final stokMenipis = produk.stok <= 3;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Foto produk (pakai widget FotoProduk yang sudah ada) — diperbesar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: FotoProduk(fotoPath: produk.fotoPath, size: 84),
+          ),
+          const SizedBox(width: 14),
+
+          // Info produk
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  produk.nama,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    _tagInfo(
+                      icon: Icons.money,
+                      label: 'Modal Rp ${formatRibuan(produk.hargaBeli)}',
+                      warna: Colors.grey[700]!,
+                      bg: Colors.grey[100]!,
+                    ),
+                    _tagInfo(
+                      icon: Icons.sell,
+                      label: 'Jual Rp ${formatRibuan(produk.hargaJual)}',
+                      warna: Colors.green[800]!,
+                      bg: Colors.green[50]!,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                _tagInfo(
+                  icon: stokMenipis ? Icons.warning_amber : Icons.inventory_2,
+                  label: 'Stok: ${produk.stok}',
+                  warna: stokMenipis ? Colors.red[800]! : Colors.blue[800]!,
+                  bg: stokMenipis ? Colors.red[50]! : Colors.blue[50]!,
+                ),
+              ],
+            ),
+          ),
+
+          // Menu aksi (titik tiga, biar tidak penuh)
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.grey),
+            onSelected: (value) {
+              switch (value) {
+                case 'stok':
+                  _bukaDialogTambahStok(context, produk);
+                  break;
+                case 'edit':
+                  _bukaFormProduk(context, produk: produk);
+                  break;
+                case 'hapus':
+                  _konfirmasiHapus(context, produk);
+                  break;
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'stok',
+                child: Row(
+                  children: [
+                    Icon(Icons.add_box, color: Colors.green, size: 20),
+                    SizedBox(width: 10),
+                    Text('Tambah Stok'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'edit',
+                child: Row(
+                  children: [
+                    Icon(Icons.edit, color: Colors.blue, size: 20),
+                    SizedBox(width: 10),
+                    Text('Edit Produk'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'hapus',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete, color: Colors.red, size: 20),
+                    SizedBox(width: 10),
+                    Text('Hapus'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tagInfo({
+    required IconData icon,
+    required String label,
+    required Color warna,
+    required Color bg,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: warna),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(fontSize: 11.5, color: warna, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
   }
 
   void _bukaFormProduk(BuildContext context, {Produk? produk}) {
@@ -187,7 +346,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
       builder: (dialogContext) => AlertDialog(
         title: Row(
           children: [
-            const Icon(Icons.add_box, color: Colors.green),
+            const Icon(Icons.add_box, color: Color.fromARGB(255, 159, 223, 12)),
             const SizedBox(width: 8),
             Expanded(
               child: Text('Tambah Stok "${produk.nama}"',
@@ -304,16 +463,23 @@ class _FormProdukScreenState extends State<FormProdukScreen> {
     super.initState();
     if (isEdit) {
       _namaController.text = widget.produk!.nama;
-      _hargaBeliController.text = widget.produk!.hargaBeli.toStringAsFixed(0);
-      _hargaJualController.text = widget.produk!.hargaJual.toStringAsFixed(0);
+      _hargaBeliController.text = formatRibuan(widget.produk!.hargaBeli);
+      _hargaJualController.text = formatRibuan(widget.produk!.hargaJual);
       _stokController.text = widget.produk!.stok.toString();
       _fotoPath = widget.produk!.fotoPath;
       _fotoPathAwal = widget.produk!.fotoPath;
     }
+    // Perbarui pratinjau keuntungan secara live saat harga diketik.
+    _hargaBeliController.addListener(_refreshPratinjau);
+    _hargaJualController.addListener(_refreshPratinjau);
   }
+
+  void _refreshPratinjau() => setState(() {});
 
   @override
   void dispose() {
+    _hargaBeliController.removeListener(_refreshPratinjau);
+    _hargaJualController.removeListener(_refreshPratinjau);
     _namaController.dispose();
     _hargaBeliController.dispose();
     _hargaJualController.dispose();
@@ -321,23 +487,60 @@ class _FormProdukScreenState extends State<FormProdukScreen> {
     super.dispose();
   }
 
+  // Ambil angka murni dari teks berformat "60.000" -> 60000
+  double _angkaMurni(String teks) {
+    return double.parse(teks.replaceAll('.', '').trim());
+  }
+
+  double? _coba(String teks) {
+    final bersih = teks.replaceAll('.', '').trim();
+    if (bersih.isEmpty) return null;
+    return double.tryParse(bersih);
+  }
+
   Future<void> _pilihFoto() async {
     final sumber = await showModalBottomSheet<ImageSource>(
       context: context,
+      backgroundColor: Colors.transparent,
       builder: (sheetContext) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_camera),
-              title: const Text('Ambil Foto dari Kamera'),
-              onTap: () => Navigator.pop(sheetContext, ImageSource.camera),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Pilih dari Galeri'),
-              onTap: () => Navigator.pop(sheetContext, ImageSource.gallery),
-            ),
-          ],
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
+                  child: Icon(Icons.photo_camera, color: Theme.of(context).primaryColor),
+                ),
+                title: const Text('Ambil Foto dari Kamera'),
+                onTap: () => Navigator.pop(sheetContext, ImageSource.camera),
+              ),
+              ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
+                  child: Icon(Icons.photo_library, color: Theme.of(context).primaryColor),
+                ),
+                title: const Text('Pilih dari Galeri'),
+                onTap: () => Navigator.pop(sheetContext, ImageSource.gallery),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
@@ -378,6 +581,7 @@ class _FormProdukScreenState extends State<FormProdukScreen> {
       showDialog(
         context: context,
         builder: (_) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Row(
             children: [
               Icon(Icons.warning_amber, color: Colors.orange),
@@ -402,8 +606,8 @@ class _FormProdukScreenState extends State<FormProdukScreen> {
       id: widget.produk?.id,
       nama: nama,
       fotoPath: _fotoPath,
-      hargaBeli: double.parse(_hargaBeliController.text.trim()),
-      hargaJual: double.parse(_hargaJualController.text.trim()),
+      hargaBeli: _angkaMurni(_hargaBeliController.text),
+      hargaJual: _angkaMurni(_hargaJualController.text),
       stok: int.parse(_stokController.text.trim()),
     );
 
@@ -421,53 +625,224 @@ class _FormProdukScreenState extends State<FormProdukScreen> {
     if (context.mounted) Navigator.pop(context);
   }
 
+  InputDecoration _dekorasiField({
+    required String label,
+    required IconData icon,
+    String? prefixText,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      prefixText: prefixText,
+      filled: true,
+      fillColor: Colors.grey[50],
+      prefixIcon: Icon(icon, size: 20),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey[300]!),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey[300]!),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Theme.of(context).primaryColor, width: 1.6),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.red),
+      ),
+      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+    );
+  }
+
+  Widget _kartuBagian({required String judul, required IconData ikon, required List<Widget> anak}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(ikon, size: 18, color: Theme.of(context).primaryColor),
+              const SizedBox(width: 8),
+              Text(
+                judul,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13.5,
+                  color: Colors.grey[800],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...anak,
+        ],
+      ),
+    );
+  }
+
+  Widget _pratinjauKeuntungan() {
+    final beli = _coba(_hargaBeliController.text);
+    final jual = _coba(_hargaJualController.text);
+
+    if (beli == null || jual == null) return const SizedBox.shrink();
+
+    final untung = jual - beli;
+    final margin = beli > 0 ? (untung / beli * 100) : 0.0;
+    final positif = untung >= 0;
+    final warnaUtama = positif ? Colors.green[700]! : Colors.red[700]!;
+    final warnaBg = positif ? Colors.green[50]! : Colors.red[50]!;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: warnaBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: warnaUtama.withOpacity(0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            positif ? Icons.trending_up : Icons.trending_down,
+            color: warnaUtama,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Keuntungan per item',
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey[700]),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Rp ${formatRibuan(untung.abs())}${positif ? '' : ' (rugi)'}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    color: warnaUtama,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              '${margin.toStringAsFixed(0)}%',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: warnaUtama),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final primary = const Color.fromARGB(255, 146, 189, 46); // ← ganti warna menu tambah produk
+
     return Scaffold(
+      backgroundColor: Colors.grey[100],
       appBar: AppBar(
         title: Text(isEdit ? 'Edit Produk' : 'Tambah Produk'),
-        backgroundColor: Theme.of(context).primaryColor,
+        backgroundColor: primary,
         foregroundColor: Colors.white,
+        elevation: 0,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
         child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // ── Foto produk ───────────────────────────────
               Center(
                 child: GestureDetector(
                   onTap: _sedangProsesFoto ? null : _pilihFoto,
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: SizedBox(
-                          width: 120,
-                          height: 120,
-                          child: _sedangProsesFoto
-                              ? const Center(child: CircularProgressIndicator())
-                              : (_fotoPath != null && File(_fotoPath!).existsSync())
-                                  ? Image.file(File(_fotoPath!), fit: BoxFit.cover)
-                                  : Container(
-                                      color: Colors.grey[200],
-                                      child: const Icon(Icons.add_a_photo,
-                                          size: 32, color: Colors.grey),
-                                    ),
+                      Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            colors: [primary, primary.withOpacity(0.4)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                        ),
+                        child: ClipOval(
+                          child: SizedBox(
+                            width: 128,
+                            height: 128,
+                            child: _sedangProsesFoto
+                                ? Container(
+                                    color: Colors.white,
+                                    child: const Center(
+                                        child: CircularProgressIndicator()),
+                                  )
+                                : (_fotoPath != null &&
+                                        File(_fotoPath!).existsSync())
+                                    ? Image.file(File(_fotoPath!), fit: BoxFit.cover)
+                                    : Container(
+                                        color: Colors.grey[100],
+                                        child: Icon(Icons.inventory_2_outlined,
+                                            size: 40, color: Colors.grey[400]),
+                                      ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: 0,
+                        bottom: 2,
+                        child: Container(
+                          padding: const EdgeInsets.all(7),
+                          decoration: BoxDecoration(
+                            color: primary,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2.5),
+                          ),
+                          child: const Icon(Icons.camera_alt,
+                              size: 15, color: Colors.white),
                         ),
                       ),
                       if (_fotoPath != null && !_sedangProsesFoto)
                         Positioned(
-                          right: -6,
-                          top: -6,
+                          left: -4,
+                          top: -4,
                           child: GestureDetector(
                             onTap: _hapusFotoDipilih,
-                            child: const CircleAvatar(
-                              radius: 13,
-                              backgroundColor: Colors.red,
-                              child: Icon(Icons.close, size: 15, color: Colors.white),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: const BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.close,
+                                  size: 13, color: Colors.white),
                             ),
                           ),
                         ),
@@ -475,87 +850,113 @@ class _FormProdukScreenState extends State<FormProdukScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
               Center(
                 child: Text(
-                  _fotoPath == null ? 'Tap untuk tambah foto (opsional)' : 'Tap untuk ganti foto',
+                  _fotoPath == null
+                      ? 'Tap untuk tambah foto (opsional)'
+                      : 'Tap untuk ganti foto',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ),
-              const SizedBox(height: 20),
-              TextFormField(
-                controller: _namaController,
-                decoration: const InputDecoration(
-                  labelText: 'Nama Barang',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.label),
-                ),
-                validator: (value) => value == null || value.trim().isEmpty
-                    ? 'Nama tidak boleh kosong'
-                    : null,
+              const SizedBox(height: 22),
+
+              // ── Informasi dasar ───────────────────────────
+              _kartuBagian(
+                judul: 'Informasi Produk',
+                ikon: Icons.info_outline,
+                anak: [
+                  TextFormField(
+                    controller: _namaController,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    inputFormatters: [KapitalSetiapKataFormatter()],
+                    decoration: _dekorasiField(label: 'Nama Barang', icon: Icons.label_outline),
+                    validator: (value) => value == null || value.trim().isEmpty
+                        ? 'Nama tidak boleh kosong'
+                        : null,
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: _stokController,
+                    decoration: _dekorasiField(label: 'Stok', icon: Icons.inventory),
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Stok tidak boleh kosong';
+                      }
+                      if (int.tryParse(value.trim()) == null) {
+                        return 'Masukkan angka yang valid';
+                      }
+                      return null;
+                    },
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _hargaBeliController,
-                decoration: const InputDecoration(
-                  labelText: 'Harga Asli (Modal)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.money),
-                  prefixText: 'Rp ',
-                ),
-                keyboardType: TextInputType.number,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty)
-                    return 'Harga asli tidak boleh kosong';
-                  if (double.tryParse(value.trim()) == null)
-                    return 'Masukkan angka yang valid';
-                  return null;
-                },
+              const SizedBox(height: 14),
+
+              // ── Harga ──────────────────────────────────────
+              _kartuBagian(
+                judul: 'Harga',
+                ikon: Icons.payments_outlined,
+                anak: [
+                  TextFormField(
+                    controller: _hargaBeliController,
+                    decoration: _dekorasiField(
+                      label: 'Harga Asli (Modal)',
+                      icon: Icons.money,
+                      prefixText: 'Rp ',
+                    ),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [RupiahInputFormatter()],
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Harga asli tidak boleh kosong';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: _hargaJualController,
+                    decoration: _dekorasiField(
+                      label: 'Harga Jual',
+                      icon: Icons.sell_outlined,
+                      prefixText: 'Rp ',
+                    ),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [RupiahInputFormatter()],
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Harga jual tidak boleh kosong';
+                      }
+                      return null;
+                    },
+                  ),
+                  _pratinjauKeuntungan(),
+                ],
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _hargaJualController,
-                decoration: const InputDecoration(
-                  labelText: 'Harga Jual',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.sell),
-                  prefixText: 'Rp ',
-                ),
-                keyboardType: TextInputType.number,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty)
-                    return 'Harga jual tidak boleh kosong';
-                  if (double.tryParse(value.trim()) == null)
-                    return 'Masukkan angka yang valid';
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _stokController,
-                decoration: const InputDecoration(
-                  labelText: 'Stok',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.inventory),
-                ),
-                keyboardType: TextInputType.number,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty)
-                    return 'Stok tidak boleh kosong';
-                  if (int.tryParse(value.trim()) == null)
-                    return 'Masukkan angka yang valid';
-                  return null;
-                },
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton.icon(
-                onPressed: _simpan,
-                icon: const Icon(Icons.save),
-                label: Text(isEdit ? 'Update Produk' : 'Simpan Produk'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  backgroundColor: Theme.of(context).primaryColor,
-                  foregroundColor: Colors.white,
+              const SizedBox(height: 26),
+
+              // ── Tombol simpan ─────────────────────────────
+              SizedBox(
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: _simpan,
+                  icon: Icon(isEdit ? Icons.update : Icons.save, size: 20),
+                  label: Text(
+                    isEdit ? 'Update Produk' : 'Simpan Produk',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primary,
+                    foregroundColor: Colors.white,
+                    elevation: 2,
+                    shadowColor: primary.withOpacity(0.4),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
                 ),
               ),
             ],

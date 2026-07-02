@@ -754,6 +754,18 @@ class _StrukScreenState extends State<StrukScreen> {
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
+            const Text(
+              'UD. VIA JAYA',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 2),
+            const Text(
+              'Terima kasih telah berbelanja',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 20),
             const Icon(Icons.check_circle, color: Colors.green, size: 64),
             const SizedBox(height: 8),
             const Text('Transaksi Berhasil',

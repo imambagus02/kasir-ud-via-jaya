@@ -41,6 +41,7 @@ dependencies:
   path_provider: ^2.1.4
   share_plus: ^10.1.2
   image_picker: ^1.1.2
+  excel: ^2.1.0
 
   # Untuk fitur cetak struk ke printer thermal Bluetooth
   print_bluetooth_thermal: ^1.1.1

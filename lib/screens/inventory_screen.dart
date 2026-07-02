@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../models/produk.dart';
@@ -75,6 +76,7 @@ class InventoryScreen extends StatefulWidget {
 class _InventoryScreenState extends State<InventoryScreen> {
   final _searchController = TextEditingController();
   String _keyword = '';
+  bool _sedangImpor = false;
 
   @override
   void initState() {
@@ -96,32 +98,56 @@ class _InventoryScreenState extends State<InventoryScreen> {
       backgroundColor: Colors.grey[100],
       body: Column(
         children: [
-          // Search bar
+          // Search bar + tombol import Excel
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Cari produk...',
-                filled: true,
-                fillColor: Colors.white,
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _keyword.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _keyword = '');
-                        },
-                      )
-                    : null,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Cari produk...',
+                      filled: true,
+                      fillColor: Colors.white,
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: _keyword.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() => _keyword = '');
+                              },
+                            )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                    ),
+                    onChanged: (val) =>
+                        setState(() => _keyword = val.toLowerCase()),
+                  ),
                 ),
-                contentPadding: const EdgeInsets.symmetric(vertical: 0),
-              ),
-              onChanged: (val) => setState(() => _keyword = val.toLowerCase()),
+                const SizedBox(width: 8),
+                Material(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  child: IconButton(
+                    tooltip: 'Import dari Excel',
+                    onPressed: _sedangImpor ? null : () => _importExcel(context),
+                    icon: _sedangImpor
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(Icons.upload_file,
+                            color: Theme.of(context).primaryColor),
+                  ),
+                ),
+              ],
             ),
           ),
 
@@ -172,6 +198,96 @@ class _InventoryScreenState extends State<InventoryScreen> {
         onPressed: () => _bukaFormProduk(context),
         child: const Icon(Icons.add),
       ),
+    );
+  }
+
+  // ─── Import produk dari Excel ─────────────────────────────────────────────
+
+  Future<void> _importExcel(BuildContext context) async {
+    final hasilPilih = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx'],
+    );
+    if (hasilPilih == null || hasilPilih.files.single.path == null) return;
+
+    final path = hasilPilih.files.single.path!;
+    setState(() => _sedangImpor = true);
+
+    try {
+      final hasil = await context.read<ProdukProvider>().importDariExcel(path);
+      if (context.mounted) _tampilkanHasilImpor(context, hasil);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal membaca file Excel: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sedangImpor = false);
+    }
+  }
+
+  void _tampilkanHasilImpor(BuildContext context, HasilImporProduk hasil) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.upload_file, color: Colors.green),
+            SizedBox(width: 8),
+            Text('Hasil Import'),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _barisHasil(Icons.check_circle, Colors.green,
+                    'Berhasil ditambahkan: ${hasil.berhasil} produk'),
+                const SizedBox(height: 6),
+                _barisHasil(Icons.info, Colors.orange,
+                    'Dilewati (nama sudah ada): ${hasil.duplikat} produk'),
+                const SizedBox(height: 6),
+                _barisHasil(Icons.error, Colors.red,
+                    'Gagal dibaca: ${hasil.gagal} baris'),
+                if (hasil.pesanGagal.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  const Text('Detail baris gagal:',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 6),
+                  ...hasil.pesanGagal.map(
+                    (p) => Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Text('• $p',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _barisHasil(IconData icon, Color warna, String teks) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: warna),
+        const SizedBox(width: 8),
+        Expanded(child: Text(teks, style: const TextStyle(fontSize: 13.5))),
+      ],
     );
   }
 
